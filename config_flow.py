@@ -187,6 +187,37 @@ class Validator:
                 return False
         return True
 
+    async def azure_ai(self):
+        self._validate_provider()
+        api_key = self.user_input.get(CONF_AZURE_AI_API_KEY)
+        endpoint_url = self.user_input.get(CONF_AZURE_AI_ENDPOINT)
+        if not api_key:
+            _LOGGER.error("API key is missing for Azure AI.")
+            raise ServiceValidationError("empty_api_key")
+        if not endpoint_url:
+            _LOGGER.error("Endpoint URL is missing for Azure AI.")
+            raise ServiceValidationError("empty_endpoint")
+        try:
+            url_parsed = urllib.parse.urlparse(endpoint_url)
+            protocol = url_parsed.scheme
+            base_url = url_parsed.hostname
+            port = ":" + str(url_parsed.port) if url_parsed.port else ""
+            path = url_parsed.path if url_parsed.path else ""
+            # Adjust the endpoint to match Azure AI's API
+            endpoint = path + "/openai/deployments?api-version=2023-05-15"
+            header = {
+                'Content-type': 'application/json',
+                'api-key': api_key
+            }
+            payload = {}
+            method = "GET"
+            if not await self._handshake(base_url=base_url, endpoint=endpoint, protocol=protocol, port=port, header=header, payload=payload, expected_status=200, method=method):
+                _LOGGER.error("Could not connect to Azure AI server.")
+                raise ServiceValidationError("handshake_failed")
+        except Exception as e:
+            _LOGGER.error(f"Could not parse endpoint: {e}")
+            raise ServiceValidationError("endpoint_parse_failed")
+
     def get_configured_providers(self):
         providers = []
         try:
