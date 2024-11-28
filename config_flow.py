@@ -197,26 +197,31 @@ class Validator:
         if not endpoint_url:
             _LOGGER.error("Endpoint URL is missing for Azure AI.")
             raise ServiceValidationError("empty_endpoint")
+        # Parsing the endpoint URL
         try:
             url_parsed = urllib.parse.urlparse(endpoint_url)
-            protocol = url_parsed.scheme
-            base_url = url_parsed.hostname
-            port = ":" + str(url_parsed.port) if url_parsed.port else ""
-            path = url_parsed.path if url_parsed.path else ""
-            # Adjust the endpoint to match Azure AI's API
-            endpoint = path + "/openai/deployments?api-version=2023-05-15"
-            header = {
-                'Content-type': 'application/json',
-                'api-key': api_key
-            }
-            payload = {}
-            method = "GET"
-            if not await self._handshake(base_url=base_url, endpoint=endpoint, protocol=protocol, port=port, header=header, payload=payload, expected_status=200, method=method):
-                _LOGGER.error("Could not connect to Azure AI server.")
-                raise ServiceValidationError("handshake_failed")
         except Exception as e:
-            _LOGGER.error(f"Could not parse endpoint: {e}")
+            _LOGGER.error(f"Could not parse endpoint URL: {e}")
             raise ServiceValidationError("endpoint_parse_failed")
+        protocol = url_parsed.scheme
+        base_url = url_parsed.hostname
+        port = ":" + str(url_parsed.port) if url_parsed.port else ""
+        path = url_parsed.path if url_parsed.path else ""
+        # Adjust the endpoint to match Azure AI's API
+        endpoint = path.rstrip('/') + "/openai/deployments?api-version=2023-05-15"
+        header = {
+            'Content-type': 'application/json',
+            'api-key': api_key
+        }
+        payload = {}
+        method = "GET"
+        # Log the full URL for debugging
+        url = f'{protocol}://{base_url}{port}{endpoint}'
+        _LOGGER.debug(f"Connecting to Azure AI endpoint: {url}")
+        if not await self._handshake(base_url=base_url, endpoint=endpoint, protocol=protocol, port=port, header=header, payload=payload, expected_status=200, method=method):
+            _LOGGER.error("Could not connect to Azure AI server.")
+            raise ServiceValidationError("handshake_failed")
+
 
     def get_configured_providers(self):
         providers = []
