@@ -90,11 +90,10 @@ class Validator:
         if not self.user_input["provider"]:
             raise ServiceValidationError("empty_mode")
 
-    async def _handshake(self, base_url, endpoint, protocol="http", port="", header={}, payload={}, expected_status=200, method="GET"):
-        _LOGGER.debug(
-            f"Connecting to {protocol}://{base_url}{port}{endpoint}")
+    async def _handshake(self, base_url, endpoint, protocol="http", header={}, payload={}, expected_status=200, method="GET"):
+        url = f'{protocol}://{base_url}{endpoint}'
+        _LOGGER.debug(f"Attempting handshake with URL: {url}")
         session = async_get_clientsession(self.hass)
-        url = f'{protocol}://{base_url}{port}{endpoint}'
         try:
             if method == "GET":
                 response = await session.get(url, headers=header)
@@ -103,12 +102,12 @@ class Validator:
             if response.status == expected_status:
                 return True
             else:
-                _LOGGER.error(
-                    f"Handshake failed with status: {response.status}")
+                _LOGGER.error(f"Handshake failed with status: {response.status}, URL: {url}")
                 return False
         except Exception as e:
             _LOGGER.error(f"Could not connect to {url}: {e}")
             return False
+
 
     async def localai(self):
         self._validate_provider()
@@ -204,11 +203,13 @@ class Validator:
             _LOGGER.error(f"Could not parse endpoint URL: {e}")
             raise ServiceValidationError("endpoint_parse_failed")
         protocol = url_parsed.scheme
-        base_url = url_parsed.hostname
-        port = ":" + str(url_parsed.port) if url_parsed.port else ""
+        base_url = url_parsed.netloc  # Use netloc to include the port if any
         path = url_parsed.path if url_parsed.path else ""
-        # Adjust the endpoint to match Azure AI's API
-        endpoint = path.rstrip('/') + "/openai/deployments?api-version=2023-05-15"
+        # Ensure the path doesn't include '/openai/deployments'
+        if '/openai/deployments' in path:
+            path = path.split('/openai/deployments')[0]
+        # Construct the full endpoint
+        endpoint = f"{path.rstrip('/')}/openai/deployments?api-version=2023-05-15"
         header = {
             'Content-type': 'application/json',
             'api-key': api_key
@@ -216,12 +217,11 @@ class Validator:
         payload = {}
         method = "GET"
         # Log the full URL for debugging
-        url = f'{protocol}://{base_url}{port}{endpoint}'
+        url = f'{protocol}://{base_url}{endpoint}'
         _LOGGER.debug(f"Connecting to Azure AI endpoint: {url}")
-        if not await self._handshake(base_url=base_url, endpoint=endpoint, protocol=protocol, port=port, header=header, payload=payload, expected_status=200, method=method):
+        if not await self._handshake(base_url=base_url, endpoint=endpoint, protocol=protocol, header=header, payload=payload, expected_status=200, method=method):
             _LOGGER.error("Could not connect to Azure AI server.")
             raise ServiceValidationError("handshake_failed")
-
 
     def get_configured_providers(self):
         providers = []
@@ -491,7 +491,6 @@ class llmvisionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             vol.Required(CONF_AZURE_AI_ENDPOINT): str,
             vol.Required(CONF_AZURE_AI_API_KEY): str,
         })
-
         if user_input is not None:
             user_input["provider"] = self.init_info["provider"]
             validator = Validator(self.hass, user_input)
@@ -503,12 +502,14 @@ class llmvisionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 return self.async_show_form(
                     step_id="azure_ai",
                     data_schema=data_schema,
-                    errors={"base": "handshake_failed"}
+                    errors={"base": str(e)}
                 )
-
         return self.async_show_form(
             step_id="azure_ai",
             data_schema=data_schema,
+            description_placeholders={
+                "endpoint_info": "Enter your Azure OpenAI resource's endpoint URL (e.g., https://your-resource-name.openai.azure.com). Do not include any additional paths."
+            },
         )
 
     async def azure_ai(self):
