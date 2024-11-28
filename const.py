@@ -1,10 +1,14 @@
 """ Constants for llmvision component"""
 
 # Global constants
-DOMAIN = "llmvisionazure"
+DOMAIN = "llmvision"
 
 # Configuration values from setup
 CONF_OPENAI_API_KEY = 'openai_api_key'
+CONF_AZURE_OPENAI_BASE_URL = 'azure_openai_base_url'
+CONF_AZURE_OPENAI_DEPLOYMENT = 'azure_openai_deployment'
+CONF_AZURE_OPENAI_API_VERSION = 'azure_openai_api_version'
+CONF_AZURE_OPENAI_API_KEY = 'azure_openai_api_key'
 CONF_ANTHROPIC_API_KEY = 'anthropic_api_key'
 CONF_GOOGLE_API_KEY = 'google_api_key'
 CONF_GROQ_API_KEY = 'groq_api_key'
@@ -17,8 +21,6 @@ CONF_OLLAMA_HTTPS = 'ollama_https'
 CONF_CUSTOM_OPENAI_ENDPOINT = 'custom_openai_endpoint'
 CONF_CUSTOM_OPENAI_API_KEY = 'custom_openai_api_key'
 CONF_RETENTION_TIME = 'retention_time'
-CONF_AZURE_AI_API_KEY = 'azure_ai_api_key'
-CONF_AZURE_AI_ENDPOINT = 'azure_ai_endpoint'
 
 # service call constants
 MESSAGE = 'message'
@@ -42,6 +44,7 @@ SENSOR_ENTITY = 'sensor_entity'
 
 # Error messages
 ERROR_OPENAI_NOT_CONFIGURED = "OpenAI is not configured"
+ERROR_AZURE_OPENAI_NOT_CONFIGURED = "Azure OpenAI is not configured"
 ERROR_ANTHROPIC_NOT_CONFIGURED = "Anthropic is not configured"
 ERROR_GOOGLE_NOT_CONFIGURED = "Google is not configured"
 ERROR_GROQ_NOT_CONFIGURED = "Groq is not configured"
@@ -51,7 +54,6 @@ ERROR_OLLAMA_NOT_CONFIGURED = "Ollama is not configured"
 ERROR_CUSTOM_OPENAI_NOT_CONFIGURED = "Custom OpenAI provider is not configured"
 ERROR_NO_IMAGE_INPUT = "No image input provided"
 ERROR_HANDSHAKE_FAILED = "Connection could not be established"
-ERROR_AZURE_AI_NOT_CONFIGURED = "Azure AI is not configured"
 
 # Versions
 # https://docs.anthropic.com/en/api/versioning
@@ -64,4 +66,3 @@ ENDPOINT_GOOGLE = "https://generativelanguage.googleapis.com/v1beta/models/{mode
 ENDPOINT_GROQ = "https://api.groq.com/openai/v1/chat/completions"
 ENDPOINT_LOCALAI = "{protocol}://{ip_address}:{port}/v1/chat/completions"
 ENDPOINT_OLLAMA = "{protocol}://{ip_address}:{port}/api/chat"
-ENDPOINT_AZURE_AI = "{endpoint}"

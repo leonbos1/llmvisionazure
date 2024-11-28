@@ -30,6 +30,16 @@
                     "openai_api_key": "Your API key"
                 }
             },
+            "azure_openai": {
+                "title": "Configure Azure AI",
+                "description": "",
+                "data": {
+                    "azure_openai_api_key": "API key",
+                    "azure_openai_base_url": "OpenAI Base Url",
+                    "azure_openai_deployment": "deployment name",
+                    "azure_openai_api_version": "API Version"
+                }
+            },
             "anthropic": {
                 "title": "Configure Anthropic Claude",
                 "description": "Provide a valid Anthropic API key.",

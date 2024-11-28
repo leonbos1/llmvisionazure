@@ -6,6 +6,10 @@ import urllib.parse
 from .const import (
     DOMAIN,
     CONF_OPENAI_API_KEY,
+    CONF_AZURE_OPENAI_BASE_URL,
+    CONF_AZURE_OPENAI_DEPLOYMENT,
+    CONF_AZURE_OPENAI_API_VERSION,
+    CONF_AZURE_OPENAI_API_KEY,
     CONF_ANTHROPIC_API_KEY,
     CONF_GOOGLE_API_KEY,
     CONF_GROQ_API_KEY,
@@ -19,8 +23,6 @@ from .const import (
     CONF_CUSTOM_OPENAI_ENDPOINT,
     VERSION_ANTHROPIC,
     CONF_RETENTION_TIME,
-    CONF_AZURE_AI_API_KEY,
-    CONF_AZURE_AI_ENDPOINT
 )
 import voluptuous as vol
 import logging
@@ -90,24 +92,26 @@ class Validator:
         if not self.user_input["provider"]:
             raise ServiceValidationError("empty_mode")
 
-    async def _handshake(self, base_url, endpoint, protocol="http", header={}, payload={}, expected_status=200, method="GET"):
-        url = f'{protocol}://{base_url}{endpoint}'
-        _LOGGER.debug(f"Attempting handshake with URL: {url}")
+    async def _handshake(self, base_url, endpoint, protocol="http", port="", header={}, payload={}, expected_status=200, method="GET"):
+        _LOGGER.warning(
+            f"Connecting to {protocol}://{base_url}{port}{endpoint}")
         session = async_get_clientsession(self.hass)
+        url = f'{protocol}://{base_url}{port}{endpoint}'
         try:
             if method == "GET":
+                _LOGGER.warning(f"GET: {url} / {header}")
                 response = await session.get(url, headers=header)
             elif method == "POST":
                 response = await session.post(url, headers=header, json=payload)
             if response.status == expected_status:
                 return True
             else:
-                _LOGGER.error(f"Handshake failed with status: {response.status}, URL: {url}")
+                _LOGGER.error(
+                    f"Handshake failed with status: {response.status}")
                 return False
         except Exception as e:
             _LOGGER.error(f"Could not connect to {url}: {e}")
             return False
-
 
     async def localai(self):
         self._validate_provider()
@@ -135,6 +139,31 @@ class Validator:
         self._validate_provider()
         if not await self._validate_api_key(self.user_input[CONF_OPENAI_API_KEY]):
             _LOGGER.error("Could not connect to OpenAI server.")
+            raise ServiceValidationError("handshake_failed")
+
+    async def azure_openai(self):
+        self._validate_provider()
+        try:
+            url = urllib.parse.urlparse(
+                "https://" + self.user_input[CONF_AZURE_OPENAI_BASE_URL]+"/openai/models/gpt-4o-mini?api-version=2024-03-01-preview")
+            protocol = url.scheme
+            base_url = url.hostname
+            path = url.path if url.path else ""
+            querystring = url.query if url.query else ""
+            port = ":" + str(url.port) if url.port else ""
+
+            endpoint = path + "?" + querystring
+            header = {'Content-type': 'application/json',
+                      'api-key': self.user_input[CONF_AZURE_OPENAI_API_KEY]}
+        except Exception as e:
+            _LOGGER.error(f"Could not parse endpoint: {e}")
+            raise ServiceValidationError("endpoint_parse_failed")
+
+        _LOGGER.debug(
+            f"Connecting to: [protocol: {protocol}, base_url: {base_url}, port: {port}, endpoint: {endpoint}]")
+
+        if not await self._handshake(base_url=base_url, port=port, protocol=protocol, endpoint=endpoint, header=header):
+            _LOGGER.error("Could not connect to Azure OpenAI server.")
             raise ServiceValidationError("handshake_failed")
 
     async def custom_openai(self):
@@ -186,43 +215,6 @@ class Validator:
                 return False
         return True
 
-    async def azure_ai(self):
-        self._validate_provider()
-        api_key = self.user_input.get(CONF_AZURE_AI_API_KEY)
-        endpoint_url = self.user_input.get(CONF_AZURE_AI_ENDPOINT)
-        if not api_key:
-            _LOGGER.error("API key is missing for Azure AI.")
-            raise ServiceValidationError("empty_api_key")
-        if not endpoint_url:
-            _LOGGER.error("Endpoint URL is missing for Azure AI.")
-            raise ServiceValidationError("empty_endpoint")
-        # Parsing the endpoint URL
-        try:
-            url_parsed = urllib.parse.urlparse(endpoint_url)
-        except Exception as e:
-            _LOGGER.error(f"Could not parse endpoint URL: {e}")
-            raise ServiceValidationError("endpoint_parse_failed")
-        protocol = url_parsed.scheme
-        base_url = url_parsed.netloc  # Use netloc to include the port if any
-        path = url_parsed.path if url_parsed.path else ""
-        # Ensure the path doesn't include '/openai/deployments'
-        if '/openai/deployments' in path:
-            path = path.split('/openai/deployments')[0]
-        # Construct the full endpoint
-        endpoint = f"{path.rstrip('/')}/openai/deployments?api-version=2023-05-15"
-        header = {
-            'Content-type': 'application/json',
-            'api-key': api_key
-        }
-        payload = {}
-        method = "GET"
-        # Log the full URL for debugging
-        url = f'{protocol}://{base_url}{endpoint}'
-        _LOGGER.debug(f"Connecting to Azure AI endpoint: {url}")
-        if not await self._handshake(base_url=base_url, endpoint=endpoint, protocol=protocol, header=header, payload=payload, expected_status=200, method=method):
-            _LOGGER.error("Could not connect to Azure AI server.")
-            raise ServiceValidationError("handshake_failed")
-
     def get_configured_providers(self):
         providers = []
         try:
@@ -232,6 +224,8 @@ class Validator:
             return providers
         if CONF_OPENAI_API_KEY in self.hass.data[DOMAIN]:
             providers.append("OpenAI")
+        if CONF_AZURE_OPENAI_API_KEY in self.hass.data[DOMAIN]:
+            providers.append("Azure OpenAI")
         if CONF_ANTHROPIC_API_KEY in self.hass.data[DOMAIN]:
             providers.append("Anthropic")
         if CONF_GOOGLE_API_KEY in self.hass.data[DOMAIN]:
@@ -255,13 +249,13 @@ class llmvisionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         provider_steps = {
             "Event Calendar": self.async_step_semantic_index,
             "OpenAI": self.async_step_openai,
+            "Azure OpenAI": self.async_step_azure_openai,
             "Anthropic": self.async_step_anthropic,
             "Google": self.async_step_google,
             "Groq": self.async_step_groq,
             "Ollama": self.async_step_ollama,
             "LocalAI": self.async_step_localai,
             "Custom OpenAI": self.async_step_custom_openai,
-            "Azure AI": self.async_step_azure_ai
         }
 
         step_method = provider_steps.get(provider)
@@ -275,7 +269,7 @@ class llmvisionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         data_schema = vol.Schema({
             vol.Required("provider", default="Event Calendar"): selector({
                 "select": {
-                    "options": ["Event Calendar", "OpenAI", "Anthropic", "Google", "Groq", "Ollama", "LocalAI", "Custom OpenAI", "Azure AI"],
+                    "options": ["Event Calendar", "OpenAI", "Azure OpenAI", "Anthropic", "Google", "Groq", "Ollama", "LocalAI", "Custom OpenAI"],
                     "mode": "dropdown",
                     "sort": False,
                     "custom_value": False
@@ -486,61 +480,35 @@ class llmvisionConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data_schema=data_schema,
         )
 
-    async def async_step_azure_ai(self, user_input=None):
+    async def async_step_azure_openai(self, user_input=None):
         data_schema = vol.Schema({
-            vol.Required(CONF_AZURE_AI_ENDPOINT): str,
-            vol.Required(CONF_AZURE_AI_API_KEY): str,
+            vol.Required(CONF_AZURE_OPENAI_BASE_URL): str,
+            vol.Required(CONF_AZURE_OPENAI_API_KEY): str,
+            vol.Required(CONF_AZURE_OPENAI_DEPLOYMENT): str,
+            vol.Required(CONF_AZURE_OPENAI_API_VERSION): str,
         })
+
         if user_input is not None:
+            # save provider to user_input
             user_input["provider"] = self.init_info["provider"]
             validator = Validator(self.hass, user_input)
             try:
-                await validator.azure_ai()
-                return self.async_create_entry(title="Azure AI", data=user_input)
+                await validator.azure_openai()
+                # add the mode to user_input
+                user_input["provider"] = self.init_info["provider"]
+                return self.async_create_entry(title="Azure OpenAI", data=user_input)
             except ServiceValidationError as e:
                 _LOGGER.error(f"Validation failed: {e}")
                 return self.async_show_form(
-                    step_id="azure_ai",
+                    step_id="azure_openai",
                     data_schema=data_schema,
-                    errors={"base": str(e)}
+                    errors={"base": "handshake_failed"}
                 )
-        return self.async_show_form(
-            step_id="azure_ai",
-            data_schema=data_schema,
-            description_placeholders={
-                "endpoint_info": "Enter your Azure OpenAI resource's endpoint URL (e.g., https://your-resource-name.openai.azure.com). Do not include any additional paths."
-            },
-        )
 
-    async def azure_ai(self):
-        self._validate_provider()
-        api_key = self.user_input.get(CONF_AZURE_AI_API_KEY)
-        endpoint_url = self.user_input.get(CONF_AZURE_AI_ENDPOINT)
-        if not api_key:
-            _LOGGER.error("API key is missing for Azure AI.")
-            raise ServiceValidationError("empty_api_key")
-        if not endpoint_url:
-            _LOGGER.error("Endpoint URL is missing for Azure AI.")
-            raise ServiceValidationError("empty_endpoint")
-        try:
-            url_parsed = urllib.parse.urlparse(endpoint_url)
-            protocol = url_parsed.scheme
-            base_url = url_parsed.hostname
-            port = ":" + str(url_parsed.port) if url_parsed.port else ""
-            path = url_parsed.path if url_parsed.path else ""
-            endpoint = path + "/openai/deployments?api-version=2023-05-15"
-            header = {
-                'Content-type': 'application/json',
-                'api-key': api_key
-            }
-            payload = {}
-            method = "GET"
-            if not await self._handshake(base_url=base_url, endpoint=endpoint, protocol=protocol, port=port, header=header, payload=payload, expected_status=200, method=method):
-                _LOGGER.error("Could not connect to Azure AI server.")
-                raise ServiceValidationError("handshake_failed")
-        except Exception as e:
-            _LOGGER.error(f"Could not parse endpoint: {e}")
-            raise ServiceValidationError("endpoint_parse_failed")
+        return self.async_show_form(
+            step_id="azure_openai",
+            data_schema=data_schema,
+        )
 
     async def async_step_semantic_index(self, user_input=None):
         data_schema = vol.Schema({

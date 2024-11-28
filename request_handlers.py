@@ -6,6 +6,10 @@ import inspect
 from .const import (
     DOMAIN,
     CONF_OPENAI_API_KEY,
+    CONF_AZURE_OPENAI_BASE_URL,
+    CONF_AZURE_OPENAI_DEPLOYMENT,
+    CONF_AZURE_OPENAI_API_VERSION,
+    CONF_AZURE_OPENAI_API_KEY,
     CONF_ANTHROPIC_API_KEY,
     CONF_GOOGLE_API_KEY,
     CONF_GROQ_API_KEY,
@@ -25,16 +29,14 @@ from .const import (
     ENDPOINT_OLLAMA,
     ENDPOINT_GROQ,
     ERROR_OPENAI_NOT_CONFIGURED,
+    ERROR_AZURE_OPENAI_NOT_CONFIGURED,
     ERROR_ANTHROPIC_NOT_CONFIGURED,
     ERROR_GOOGLE_NOT_CONFIGURED,
     ERROR_GROQ_NOT_CONFIGURED,
     ERROR_GROQ_MULTIPLE_IMAGES,
     ERROR_LOCALAI_NOT_CONFIGURED,
     ERROR_OLLAMA_NOT_CONFIGURED,
-    ERROR_NO_IMAGE_INPUT,
-    CONF_AZURE_AI_API_KEY,
-    CONF_AZURE_AI_ENDPOINT,
-    ERROR_AZURE_AI_NOT_CONFIGURED
+    ERROR_NO_IMAGE_INPUT
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -63,6 +65,8 @@ def get_provider(hass, provider_uid):
 
     if CONF_OPENAI_API_KEY in entry_data:
         return "OpenAI"
+    if CONF_AZURE_OPENAI_API_KEY in entry_data:
+        return "Azure OpenAI"
     elif CONF_ANTHROPIC_API_KEY in entry_data:
         return "Anthropic"
     elif CONF_GOOGLE_API_KEY in entry_data:
@@ -75,21 +79,19 @@ def get_provider(hass, provider_uid):
         return "Ollama"
     elif CONF_CUSTOM_OPENAI_API_KEY in entry_data:
         return "Custom OpenAI"
-    elif CONF_AZURE_AI_API_KEY in entry_data:
-        return "Azure"
 
     return None
 
 
 def default_model(provider): return {
     "OpenAI": "gpt-4o-mini",
+    "Azure OpenAI": "gpt-4o-mini",
     "Anthropic": "claude-3-5-sonnet-latest",
     "Google": "gemini-1.5-flash-latest",
     "Groq": "llava-v1.5-7b-4096-preview",
     "LocalAI": "gpt-4-vision-preview",
     "Ollama": "llava-phi3:latest",
-    "Custom OpenAI": "gpt-4o-mini",
-    "Azure": "gpt-4o"
+    "Custom OpenAI": "gpt-4o-mini"
 }.get(provider, "gpt-4o-mini")  # Default value if provider is not found
 
 
@@ -119,7 +121,21 @@ class RequestHandler:
             self._validate_call(provider=provider,
                                 api_key=api_key,
                                 base64_images=self.base64_images)
-            response_text = await self.openai(provider=provider, model=model, api_key=api_key)
+            response_text = await self.openai(model=model, api_key=api_key)
+        elif provider == 'Azure OpenAI':
+            api_key = self.hass.data.get(DOMAIN).get(
+                entry_id).get(CONF_AZURE_OPENAI_API_KEY)
+            base_url = self.hass.data.get(DOMAIN).get(
+                entry_id).get(CONF_AZURE_OPENAI_BASE_URL)
+            deployment = self.hass.data.get(DOMAIN).get(
+                entry_id).get(CONF_AZURE_OPENAI_DEPLOYMENT)
+            api_version = self.hass.data.get(DOMAIN).get(
+                entry_id).get(CONF_AZURE_OPENAI_API_VERSION)
+            self._validate_call(provider=provider,
+                                api_key=api_key,
+                                base64_images=self.base64_images)
+            response_text = await self.azureopenai(
+                model=model, api_key=api_key, base_url=base_url, deployment=deployment, api_version=api_version)
         elif provider == 'Anthropic':
             api_key = self.hass.data.get(DOMAIN).get(
                 entry_id).get(CONF_ANTHROPIC_API_KEY)
@@ -187,16 +203,7 @@ class RequestHandler:
             self._validate_call(provider=provider,
                                 api_key=api_key,
                                 base64_images=self.base64_images)
-            response_text = await self.openai(provider=provider, model=model, api_key=api_key, endpoint=endpoint)
-        elif provider == 'Azure':
-            api_key = self.hass.data.get(DOMAIN).get(
-                entry_id).get(CONF_AZURE_AI_API_KEY)
-            endpoint = self.hass.data.get(DOMAIN).get(
-                entry_id).get(CONF_AZURE_AI_ENDPOINT)
-            self._validate_call(provider=provider,
-                                api_key=api_key,
-                                base64_images=self.base64_images)
-            response_text = await self.openai(provider=provider, model=model, api_key=api_key, endpoint=endpoint)
+            response_text = await self.openai(model=model, api_key=api_key, endpoint=endpoint)
         else:
             raise ServiceValidationError("invalid_provider")
         return {"response_text": response_text}
@@ -206,16 +213,10 @@ class RequestHandler:
         self.filenames.append(filename)
 
     # Request Handlers
-    async def openai(self, provider, model, api_key, endpoint=ENDPOINT_OPENAI):
+    async def openai(self, model, api_key, endpoint=ENDPOINT_OPENAI):
         # Set headers and payload
-        if provider == 'Azure':
-            headers = {'Content-type': 'application/json', 'api-key': api_key}
-        else:
-            headers = {'Content-type': 'application/json', 'Authorization': 'Bearer ' + api_key}
-
         headers = {'Content-type': 'application/json',
                    'Authorization': 'Bearer ' + api_key}
-        
         data = {"model": model,
                 "messages": [{"role": "user", "content": [
                 ]}],
@@ -236,6 +237,40 @@ class RequestHandler:
         data["messages"][0]["content"].append(
             {"type": "text", "text": self.message}
         )
+
+        response = await self._post(
+            url=endpoint, headers=headers, data=data)
+
+        response_text = response.get(
+            "choices")[0].get("message").get("content")
+        return response_text
+
+    async def azureopenai(self, model, base_url, api_key, deployment, api_version):
+        # Set headers and payload
+        headers = {'Content-type': 'application/json',
+                   'api-key': api_key}
+        data = {"messages": [{"role": "system", "content": []},
+                             {"role": "user", "content": []}],
+                "max_tokens": self.max_tokens,
+                "temperature": self.temperature,
+                "stream": False
+                }
+
+        # append the prompt to the system message
+        data["messages"][0]["content"].append(
+            {"type": "text", "text": self.message}
+        )
+
+        # Add the images to the user message
+        for image, filename in zip(self.base64_images, self.filenames):
+            tag = ("Image " + str(self.base64_images.index(image) + 1)
+                   ) if filename == "" else filename
+            data["messages"][1]["content"].append(
+                {"type": "text", "text": tag + ":"})
+            data["messages"][1]["content"].append(
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image}", "detail": self.detail}})
+
+        endpoint = 'https://' + base_url + "/openai/deployments/" + deployment + "/chat/completions?api-version=" + api_version
 
         response = await self._post(
             url=endpoint, headers=headers, data=data)
@@ -471,6 +506,10 @@ class RequestHandler:
         if provider == 'OpenAI':
             if not api_key:
                 raise ServiceValidationError(ERROR_OPENAI_NOT_CONFIGURED)
+        # Checks for Azure OpenAI
+        if provider == 'Azure OpenAI':
+            if not api_key:
+                raise ServiceValidationError(ERROR_AZURE_OPENAI_NOT_CONFIGURED)
         # Checks for Anthropic
         elif provider == 'Anthropic':
             if not api_key:
@@ -494,9 +533,6 @@ class RequestHandler:
                 raise ServiceValidationError(ERROR_OLLAMA_NOT_CONFIGURED)
         elif provider == 'Custom OpenAI':
             pass
-        elif provider == 'Azure':
-            if not api_key:
-                raise ServiceValidationError(ERROR_AZURE_AI_NOT_CONFIGURED)
         else:
             raise ServiceValidationError(
                 "Invalid provider selected. The event calendar cannot be used for analysis.")
